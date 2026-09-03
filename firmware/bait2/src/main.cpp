@@ -13,6 +13,7 @@
 #include "FFTReader.h"
 #include "ACI_TemporalWindow.h"
 #include "AcousticComplexityIndex.h"
+#include "TotalEntropy.h"
 
 #include <Audio.h>
 #include <SPI.h>
@@ -69,6 +70,8 @@ RootMeanSquare rms = RootMeanSquare(rms_l, "/rms.csv", &lora, interval);
 FFTReader fftReader = FFTReader(fft256_l, "/fft.csv", false, 2, -1);
 ACI_TemporalWindow aci_window = ACI_TemporalWindow(5, fftReader, false, false, 0); // IS THIS RIGHT PARAMETERS?
 AcousticComplexityIndex aci = AcousticComplexityIndex(aci_window, "/aci.csv", &lora, interval, 60);
+
+TotalEntropy totalEntropy = TotalEntropy(interval, fftReader, "/htf.csv", &lora, 60);
 
 // OLEDDisplay display = OLEDDisplay();0
 
@@ -132,8 +135,18 @@ void setup()
     fftReader.setup();
     aci_window.setup();
     aci.setup();
+    totalEntropy.setup();
 
     DEBUG("Setup Complete.")
+
+    // Sync all sensor timers so they fire together after one interval
+    powerSensor.start();
+    envSensor.start();
+    lightSensor.start();
+    rms.start();
+    aci.start();
+    totalEntropy.start();
+
 }
 
 int v = 0;
@@ -149,10 +162,13 @@ void loop()
     fftReader.loop();
     aci_window.loop();
     aci.loop();
+    totalEntropy.loop();
 
     // oledLoop();
 
     lora.loop();
+
+    serialEvent();
 }
 
 // **************************************************************************************************
@@ -228,40 +244,63 @@ void printDirectory(File dir, int numSpaces)
 
 void serialEvent()
 {
+    static char atBuf[128];
+    static int atLen = 0;
+
+    // Relay any LoRa module responses back to the host.
+    while (Serial1.available())
+    {
+        Serial.write(Serial1.read());
+        Serial.flush();
+    }
+
     while (Serial.available())
     {
-        // get the new byte:
         char inChar = (char)Serial.read();
 
-        if (inChar == 'F')
+        // Single-character debug commands.
+        if (inChar == 'F' && atLen == 0)
         {
             File root = SD.open("/");
             Serial.println("Listing directory: /");
             printDirectory(root, 0);
         }
-        else if (inChar == 'G')
+        else if (inChar == 'G' && atLen == 0)
         {
             gain_l *= 2.0;
             amp_l.gain(gain_l);
             Serial.printf("Gain L: %f\n", gain_l);
         }
-        else if (inChar == 'g')
+        else if (inChar == 'g' && atLen == 0)
         {
             gain_l /= 2.0;
             amp_l.gain(gain_l);
             Serial.printf("Gain L: %f\n", gain_l);
         }
-        // else if (inChar == 'H')
-        // {
-        //     gain_r *= 2.0;
-        //     amp_r.gain(gain_r);
-        //     Serial.printf("Gain R: %f\n", gain_r);
-        // }
-        // else if (inChar == 'h')
-        // {
-        //     gain_r /= 2.0;
-        //     amp_r.gain(gain_r);
-        //     Serial.printf("Gain R: %f\n", gain_r);
-        // }
+        // Anything else is accumulated into a line and forwarded to the
+        // LoRa module on Serial1 once a newline is received.
+        else
+        {
+            if (inChar == '\n' || inChar == '\r')
+            {
+                if (atLen > 0)
+                {
+                    atBuf[atLen] = '\0';
+                    Serial.println();
+                    Serial1.println(atBuf);
+                    atLen = 0;
+                }
+            }
+            else if (atLen < (int)sizeof(atBuf) - 1)
+            {
+                if (atLen == 0)
+                {
+                    Serial.print("> ");
+                }
+                Serial.print(inChar);
+                Serial.flush();
+                atBuf[atLen++] = inChar;
+            }
+        }
     }
 }
