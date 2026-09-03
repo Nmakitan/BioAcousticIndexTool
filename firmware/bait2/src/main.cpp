@@ -7,13 +7,13 @@
 // #include "OLEDDisplay.h"
 #include "BME680.h"
 #include "LightSensor.h"
+#include "PowerModeTest.h"
 #include "RMS.h"
 
 // Spectral Audio
 #include "FFTReader.h"
 #include "ACI_TemporalWindow.h"
 #include "AcousticComplexityIndex.h"
-#include "TotalEntropy.h"
 
 #include <Audio.h>
 #include <SPI.h>
@@ -71,7 +71,8 @@ FFTReader fftReader = FFTReader(fft256_l, "/fft.csv", false, 2, -1);
 ACI_TemporalWindow aci_window = ACI_TemporalWindow(5, fftReader, false, false, 0); // IS THIS RIGHT PARAMETERS?
 AcousticComplexityIndex aci = AcousticComplexityIndex(aci_window, "/aci.csv", &lora, interval, 60);
 
-TotalEntropy totalEntropy = TotalEntropy(interval, fftReader, "/htf.csv", &lora, 60);
+// Power mode test harness (serial-triggered via 'P' command)
+PowerModeTest powerModeTest = PowerModeTest(powerSensor, "/powermode.csv", 60, 120, 1000);
 
 // OLEDDisplay display = OLEDDisplay();0
 
@@ -135,7 +136,7 @@ void setup()
     fftReader.setup();
     aci_window.setup();
     aci.setup();
-    totalEntropy.setup();
+
 
     DEBUG("Setup Complete.")
 
@@ -145,7 +146,7 @@ void setup()
     lightSensor.start();
     rms.start();
     aci.start();
-    totalEntropy.start();
+
 
 }
 
@@ -162,7 +163,8 @@ void loop()
     fftReader.loop();
     aci_window.loop();
     aci.loop();
-    totalEntropy.loop();
+
+    powerModeTest.loop();
 
     // oledLoop();
 
@@ -276,6 +278,19 @@ void serialEvent()
             gain_l /= 2.0;
             amp_l.gain(gain_l);
             Serial.printf("Gain L: %f\n", gain_l);
+        }
+        else if (inChar == 'P' && atLen == 0)
+        {
+            if (powerModeTest.isRunning())
+            {
+                Serial.println("Power mode test: stopping");
+                powerModeTest.stop();
+            }
+            else
+            {
+                Serial.println("Power mode test: starting (baseline -> audio_off -> done)");
+                powerModeTest.start();
+            }
         }
         // Anything else is accumulated into a line and forwarded to the
         // LoRa module on Serial1 once a newline is received.
